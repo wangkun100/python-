@@ -1,0 +1,22 @@
+import ScheduleClass
+from AccountClass import Account
+import pandas as pd
+import numpy as np
+import datetime
+import time
+
+class Run(object):
+
+    def __init__(self, account_id, initial_fund, start_date, end_date, tax):
+        self.account = Account(account_id, initial_fund, tax, start_date)
+        self.schedule = ScheduleClass.Schedule(self.account, start_date, end_date)
+
+    def before_trading(self, before_trading):
+        before_trading(self.account)
+
+    def trading(self, fields, trading):
+        self.schedule.scheduleRun(fields,trading)
+
+    def after_trading(self, after_trading):
+        after_trading(self.account)
+
