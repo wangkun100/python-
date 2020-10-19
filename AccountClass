@@ -1,0 +1,334 @@
+import pandas as pd
+import numpy as np
+import datetime
+import time
+import xlrd
+import xlwt
+import calendar
+import APIData
+from CashClass import Cash
+
+now_time = str(datetime.datetime.now().strftime('%Y%m%d'))
+
+
+class Account:
+    '''
+    用查询总资产，股票价格，指数价格，交易日期，进行股票买卖（按数量买卖，按现有资金比例买卖，按总资产比例买卖）
+    '''
+
+    def __init__(self, id = "kunyu", initial=1000000, tax=0.003, date=now_time):
+        '''
+        初始化
+        :param id:     账户名称,默认kunyu
+        :param initial:账户初始资金  默认一百万
+        :param date:   账户当前日期  默认当前时间（格式：20191123）
+        :param tax:    交易税率      默认0.003
+        '''
+        self.inital = initial
+        self.date = date
+        self.tax = tax
+        self.cash = Cash(initial)
+        self.assert_dict = {}
+
+    def searchTotalAssets(self):
+        '''
+        查询账户总资产
+        :return: 账户总资产
+        '''
+        return self.cash.searchTotalAssets()
+
+    def searchTotalAmount(self):
+        '''
+        查询股票总资产
+        :return: 股票总资产
+        '''
+        stocks_df = self.cash.searchStocksTable()
+        total_amount = stocks_df['amount'].sum()
+        return total_amount
+
+    def searchStockTodayClose(self, symbol):
+        '''
+        查询当天股票价格（收盘价）
+        :param symbol: 股票代码
+        :param date:   查询日期
+        :return:       -1未有数据 price股票收盘价
+        '''
+        price_df = APIData.searchStocksDailyAPI(symbol, self.date, self.date)
+        # print(price_df)
+        try:
+            close = price_df.iloc[0]['close']
+        except IndexError:
+            return -1
+        else:
+            return close
+
+    def searchStocksMarketData(self, symbol, start_date, end_date,
+                               fields='open,high,close,pre_close,change,pct_chg,vol,amount'):
+        '''
+        查询股票行情数据
+        :param symbol:    股票代码
+        :param start_date: 起始日期 
+        :param end_date:   截止日期
+        :param fields:    需要查询的内容
+        :return:          股票数据列表（dataframe），索引为日期
+        '''
+        stocks_df = APIData.searchStocksDailyAPI(symbol, start_date, end_date)
+        ts_code = ['ts_code']
+        fields_list = fields.split(',')
+        ts_code.extend(fields_list)
+        return stocks_df[ts_code]
+
+    def searchStocksBasicData(self, symbol, start_date, end_date,
+                              fields='ts_code,turnover_rate,volume_ratio,pe,pb'):
+        '''
+        查询股票基本面数据
+        :param symbol:    股票代码
+        :param start_date: 起始日期 
+        :param end_date:   截止日期
+        :param fields:    需要查询的内容
+        :return:          股票数据列表（dataframe），索引为日期
+        '''
+        stocks_df = APIData.searchStocksDaliyBasicAPI(symbol, start_date, end_date)
+        ts_code = ['ts_code']
+        fields_list = fields.split(',')
+        ts_code.extend(fields_list)
+        return stocks_df[ts_code]
+
+    def searchIndexToadyPrice(self, symbol):
+        '''
+        查询当天指数价格（收盘价）
+        :param symbol: 指数代码
+        :param date:   查询日期
+        :return:       -1未有数据 price指数价格
+        '''
+        price_df = APIData.searchIndexDaliyAPI(symbol, self.date, self.date)
+        try:
+            close = price_df.loc[0]['close']
+        except IndexError:
+            return -1
+        else:
+            return close
+
+    def searchIndexComponent(self, symbol):
+        '''
+        查询指数成分股，以及其权重
+        :param symbol: 指数代码
+        :return:       指数成分列表（dataframe），含权重，索引为股票代码
+        '''
+        stocks_df = APIData.searchIndxDaliyComAPI(symbol,self.date)
+        return stocks_df
+
+    def searchIndexDaliy(self, symbol, start_date, end_date):
+        '''
+        查询指数收益率
+        :param symbol:     指数代码
+        :param start_date: 起始日期
+        :param end_date:   截止日期
+        :return:           查询指数收益率（索引为日期）
+        '''
+        price_df = APIData.searchIndexDaliyAPI(symbol, start_date, end_date)
+        return price_df
+
+    def searchIsTradeDay(self, date):
+        '''
+        查询某天是否为交易日期
+        :param date:查询的日期
+        :return:    0休市，1开市
+        '''
+        trade_df = APIData.searchTradeDayAPI(date, date)
+        flag = trade_df.loc[date]['is_open']
+        return int(flag)
+
+    def searchTradeDay(self, start_date, end_date):
+        '''
+        查询一段时间的交易日期
+        :param start_date: 起始日期
+        :param end_date:   截至日期
+        :return:           交易日期表格（dataframe）索引为日期，0休市，1开市
+        '''
+        trade_df = APIData.searchTradeDayAPI(start_date, end_date)
+        return trade_df
+
+    def orderByVolume(self, symbol, volume, side):
+        '''
+        按照数量买卖
+        :param symbol: 股票代码 
+        :param volume: 交易数量
+        :param side:   0买 1卖
+        :return: 
+        '''
+        price = self.searchStockTodayClose(symbol)
+        if price == -1:
+            print(self.date + ' '+ symbol + "当天没有数据")
+        else:
+            hand_amount = int(volume / 100)
+            volume = hand_amount * 100
+            if volume == 0:
+                print(self.date + ' ' + symbol + "交易不足一手")
+            else:
+                if side == 0:
+                    flag = self.cash.buyStocks(symbol, volume * price, volume, price, self.tax)
+                    if flag == -1:
+                        print(self.date + ' '+ symbol + "由于资金不足，购买失败")
+                    if flag == 0:
+                        print(self.date + ' '+ symbol + "购买成功，现有资金%f" % (self.cash.cash))
+                if side == 1:
+                    flag = self.cash.sellStocks(symbol, volume * price, volume, price, self.tax+0.001)
+                    if flag == -2:
+                        print(self.date + ' '+ symbol + "未持有")
+                    if flag == -1:
+                        print(self.date + ' '+ symbol + "数量不足")
+                    if flag == 0:
+                        print(self.date + ' '+ symbol + "出售成功，现有资金%f" % (self.cash.cash))
+
+    def orderByPercentCash(self, symbol, percent, side):
+        '''
+        安装现有现金比例买卖
+        :param symbol:  股票代码
+        :param percent: 比例
+        :param side:    0买1卖
+        :return: 
+        '''
+        price = self.searchStockTodayClose(symbol)
+        if price == -1:
+            print(self.date + ' '+ symbol + "当天没有数据")
+        else:
+            amount = self.cash.searchCash() * percent
+            volume = amount / price
+            hand_amount = int(volume / 100)
+            volume = hand_amount * 100
+            if volume == 0:
+                print(self.date + ' ' + symbol+ "交易不足一手")
+            else:
+                if side == 0:
+                    flag = self.cash.buyStocks(symbol, volume * price, volume, price, self.tax)
+                    if flag == -1:
+                        print(self.date + ' '+ symbol + "由于资金不足，购买失败")
+                    if flag == 0:
+                        print(self.date + ' '+ symbol + "购买成功，现有资金%f" % (self.cash.cash))
+                if side == 1:
+                    flag = self.cash.sellStocks(symbol, volume * price, volume, price, self.tax+0.001)
+                    if flag == -2:
+                        print(self.date + ' '+ symbol + "未持有")
+                    if flag == -1:
+                        print(self.date + ' '+ symbol + "数量不足")
+                    if flag == 0:
+                        print(self.date + ' '+ symbol + "出售成功，现有资金%f" % (self.cash.cash))
+
+    def orderByPersentTotal(self, symbol, percent):
+        '''
+        按照总资产的比例买卖
+        :param symbol:  股票代码
+        :param percent: 比例
+        :return: 
+        '''
+        price = self.searchStockTodayClose(symbol)
+        if price == -1:
+            print(self.date + ' '+ symbol + "当天没有数据")
+        else:
+            amount = self.cash.searchTotalAssets() * percent
+            stocks_df = self.cash.searchStocksTable()
+            stocks_list = stocks_df.index
+            if symbol not in stocks_list:
+                volume = amount / price
+                hand_amount = int(volume / 100)
+                volume = hand_amount * 100
+                if volume == 0:
+                    print(self.date + ' ' + symbol + "交易不足一手")
+                else:
+                    flag = self.cash.buyStocks(symbol, volume * price, volume, price, self.tax)
+                    if flag == -1:
+                        print(self.date + ' ' + symbol + "由于资金不足，购买失败")
+                    if flag == 0:
+                        print(self.date + ' ' + symbol + "购买成功，现有资金%f" % (self.cash.cash))
+            if symbol in stocks_list:
+                amount_now = stocks_df.loc[symbol]['amount']
+                amount_buy = amount - amount_now
+                if amount_buy > 0:
+                    volume = amount_buy / price
+                    hand_amount = int(volume / 100)
+                    volume = hand_amount * 100
+                    if volume == 0:
+                        print(self.date + ' ' + symbol+ "交易不足一手")
+                    else:
+                        flag = self.cash.buyStocks(symbol, volume * price, volume, price, self.tax)
+                        if flag == -1:
+                            print(self.date + ' '+ symbol + "由于资金不足，购买失败")
+                        if flag == 0:
+                            print(self.date + ' '+ symbol + "购买成功，现有资金%f" % (self.cash.cash))
+                if amount_buy < 0:
+                    amount_buy = 0 - amount_buy
+                    volume = amount_buy / price
+                    hand_amount = volume / 100
+                    volume = hand_amount * 100
+                    if volume == 0:
+                        print(self.date + ' ' + symbol+ "交易不足一手")
+                    else:
+                        flag = self.cash.sellStocks(symbol, volume * price, volume, price, self.tax+0.001)
+                        if flag == -2:
+                            print(self.date + ' '+ symbol + "未持有")
+                        if flag == -1:
+                            print(self.date + ' '+ symbol + "数量不足")
+                        if flag == 0:
+                            print(self.date + ' '+ symbol + "出售成功，现有资金%f" % (self.cash.cash))
+
+    def updateStocksTable(self):
+        '''
+        更新股票列表
+        :return: 
+        '''
+        stocks_df = self.cash.searchStocksTable()
+        stocks_list = list(stocks_df.index)
+        for symbol in stocks_list:
+            price = self.searchStockTodayClose(symbol)
+            if price == -1:
+                continue
+            self.cash.updateStocksTable(symbol, price)
+        self.assert_dict[self.date] = stocks_df
+
+    def SMA(self, symbol, timeperiod=5, return_type=1):
+        '''
+        得出股票平均移动线
+        :param symbol:      股票代码
+        :param timeperiod:  移动窗口（默认为5）
+        :param return_type: 1 返回array，其他返回dataframe
+        :return:            1 返回array，其他返回dataframe   
+        '''
+        end_date = datetime.datetime.strptime(self.date, '%Y%m%d')
+        start_date = end_date - datetime.timedelta(days=20)
+        start_date = start_date.strftime("%Y%m%d")
+        data = APIData.SMA_API(symbol, start_date, self.date, timeperiod, return_type)
+        return data
+
+    def searchShibor(self, start_date, end_date):
+        '''
+        获取上海银行间同业拆放利率数据
+        :param start_date: 起始日期
+        :param end_date:   截止日期
+        :return:           dataframe 索引为日期
+        '''
+        df = APIData.searchShiborAPI(start_date, end_date)
+        return df
+
+#
+# a = Account(1, 100000,tax=0.001, date='20160120')
+# a.orderByPercentCash('000001.SZ',0.1,0)
+# a.orderByPercentCash('000001.SZ',0.1,1)
+# df1 = a.searchStocksMarketData('000001.SZ','20180102','20180128',fields='open')
+# print(df1)
+# df2 = a.searchTradeDay('20180101' , '20180125')
+# print(df2)
+# df3 = a.searchStocksBasicData('000001.SZ', '20180102','20180128', fields='turnover_rate,volume_ratio,pe,pb')
+# print(df3)
+# df4 = a.searchIsTradeDay('20181111')
+# print(df4)
+# df5 = a.searchTradeDay('20160101', '20180202')
+# print(df5)
+# df6 = a.searchIndexComponent('399300.SZ')
+# print(df6)
+# df7 = a.searchIndexDaliy('399300.SZ','20160102','20180102')
+# print(df7)
+# df8 = a.searchShibor('20161126','20171126')
+# print(df8)
+# df9 = a.SMA('000001.SZ',10)
+# print(df9)
