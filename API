@@ -1,0 +1,591 @@
+import tushare as ts
+import pandas as pd
+import numpy as np
+import datetime
+import time
+import xlrd
+import xlwt
+import calendar
+import os
+import talib
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import openpyxl
+import xlsxwriter
+
+ts.set_token('在tushare金融社区获取您的token')
+pro = ts.pro_api()
+
+def toExcel(path, sheet_name, df):
+    '''
+    不覆盖原有表写入数据
+    :param path: 路径
+    :param sheet_name: 新表名字
+    :param df: 数据
+    :return:
+    '''
+    # 如果没有则创建
+    try:
+        writer = pd.ExcelWriter(path,engine='openpyxl')
+        book = openpyxl.load_workbook(writer.path)
+        # 如果已存在表，就返回
+        try:
+            ws = book[sheet_name]
+            return 0
+        except:
+            pass
+    except:
+        workbook = xlsxwriter.Workbook(path)
+        workbook.close()
+        writer = pd.ExcelWriter(path,engine='openpyxl')
+        book = openpyxl.load_workbook(writer.path)
+
+    try:
+        ws = book["Sheet1"]
+        book.remove(ws)
+    except:
+        pass
+    writer.book = book
+    df.to_excel(writer, sheet_name)
+    writer.save()
+
+########################################################################################################
+# 以下是关于交易日期的函数
+def tradeDayReadPro(path, year):
+    '''
+    通过接口获取交易日期（按年接收数据）
+    :param path: 保存的文档位置
+    :param year:   选择的年份
+    :return: 
+    '''
+    start_day = str(year) + '0101'
+    end_day = str(year)  + '1231'
+    date_year = pro.trade_cal(exchange='', start_date=start_day, end_date=end_day)
+    date_year.set_index('cal_date',inplace=True)
+    toExcel(path, sheet_name=str(year), df=date_year)
+
+
+# 根据特定日期，读取交易日期，并判断其是否是交易日
+def searchTradeDayAPI(start_date, end_date):
+    '''
+    对外接口API，查询一段时间的交易日期
+    :param start_date: 起始日期
+    :param end_date:   截至日期
+    :return:           交易日期表格（dataframe）索引为日期，0休市，1开市
+    '''
+    workbook = xlrd.open_workbook(r'D:\程序化交易系统实现\data\交易日期.xlsx')
+    # 取得需要查询的表格
+    start_year = start_date[0:4]
+    end_year = end_date[0:4]
+    count = int(end_year) - int(start_year)  # 需要查询的年数
+    trade_df = pd.DataFrame(columns=['is_open'])
+
+    # 如果没有相应的年份，则下载
+    sheets = workbook.sheet_names()
+    for i in range(int(start_year), int(end_year)+1):
+        if str(i) not in sheets:
+            print("正在下载"+str(i)+"年的交易日期数据")
+            tradeDayReadPro(r'D:\程序化交易系统实现\data\交易日期.xlsx', i)
+    # 重新打开
+    workbook = xlrd.open_workbook(r'D:\程序化交易系统实现\data\交易日期.xlsx')
+    j = 0
+    if count == 0:
+        sheet_year = workbook.sheet_by_name(start_year)
+        # 将date转为datetime用于计算是第几天
+        start_date_dt = datetime.datetime.strptime(start_date, '%Y%m%d')
+        end_date_dt = datetime.datetime.strptime(end_date, '%Y%m%d')
+        start_row = int(start_date_dt.strftime('%j'))
+        end_row = int(end_date_dt.strftime('%j'))
+        # 取出数据
+        for i in range(start_row, end_row + 1):
+            rows = sheet_year.row_values(i)
+            trade_df.loc[rows[0]] = [rows[2]]
+    else:
+        sheet_year = workbook.sheet_by_name(start_year)
+        # 将date转为datetime用于计算是第几天
+        start_date_dt = datetime.datetime.strptime(start_date, '%Y%m%d')
+        start_row = int(start_date_dt.strftime('%j'))
+        # 取出数据
+        if calendar.isleap(int(start_year)) == True:
+            total = 366
+        else:
+            total = 365
+        for i in range(start_row, total):
+            rows = sheet_year.row_values(i)
+            trade_df.loc[rows[0]] = [rows[2]]
+        while True:
+            j += 1
+            if j == count:
+                sheet_year = workbook.sheet_by_name(end_year)
+                end_date_dt = datetime.datetime.strptime(end_date, '%Y%m%d')
+                end_row = int(end_date_dt.strftime('%j'))
+                for i in range(0, end_row + 1):
+                    rows = sheet_year.row_values(i)
+                    trade_df.loc[rows[0]] = [rows[2]]
+                break
+            else:
+                now_year = str(int(start_year) + j)
+                if calendar.isleap(int(now_year)) == True:
+                    total = 367
+                else:
+                    total = 366
+                sheet_year = workbook.sheet_by_name(now_year)
+                for i in range(2, total):
+                    rows = sheet_year.row_values(i)
+                    trade_df.loc[rows[0]] = [rows[2]]
+    return trade_df
+
+# searchTradeDayAPI("20150103", "20190203")
+
+#####################################################################################################
+# 以下是股票每日行情数据获取函数
+def stocksDailyReadPro(path, year, symbol):
+    '''
+    获取股票一年的每日行情数据
+    :param path:  需要读入的文件名称
+    :param year:    读取的年份
+    :param symbol:  股票代码
+    :return: 
+    '''
+    start_day = str(year) + '0101'
+    end_day = str(year)  + '1231'
+    stocks_df = pro.daily(ts_code=symbol, start_date=start_day, end_date=end_day)
+    stocks_df = stocks_df.iloc[::-1]
+    stocks_df.set_index('trade_date',inplace=True)
+    toExcel(path, sheet_name=str(year), df=stocks_df)
+
+# 读取股票日线行情并写入
+def stocksDaliyReadSomePro(symbol_list, str_year):
+    '''
+    进行多股票三年的股票日线行情并写入
+    :param symbol_list: 股票列表
+    :return: 
+    '''
+    for symbol in symbol_list:
+        path = 'D:\\程序化交易系统实现\\data\\股票日线行情指标\\' + symbol + '.xlsx'
+        stocksDailyReadPro(path, str_year, symbol)
+        time.sleep(0.1)
+
+# 获取股票日线行情数据,为今后服务
+def searchStocksDailyAPI(symbol, start_date, end_date):
+    '''
+    对外接口API，获取股票日线行情数据
+    :param symbol:     股票代码
+    :param start_date: 起始日期
+    :param end_date:   截至日期
+    :return:           返回获取股票日线行情数据（dataframe），索引是日期
+    '''
+    path = 'D:\\程序化交易系统实现\\data\\股票日线行情指标\\' + symbol + '.xlsx'
+
+    # 如果该股票不存在，则下载
+    try:
+        workbook = xlrd.open_workbook(path)
+    except:
+        print("无"+symbol+"股票数据，正在下载")
+        workbook = xlsxwriter.Workbook(path)
+        workbook.close()
+        start_year = start_date[0:4]
+        end_year = end_date[0:4]
+        for i in range(int(start_year),int(end_year)+1):
+            stocksDaliyReadSomePro([symbol], str_year=str(i))
+        workbook = xlrd.open_workbook(path)
+
+    # 取得需要查询的表格
+    start_year = start_date[0:4]
+    end_year = end_date[0:4]
+
+    # 如果没有相应的年份，则下载
+    sheets = workbook.sheet_names()
+    for i in range(int(start_year), int(end_year)+1):
+        if str(i) not in sheets:
+            print("正在下载"+symbol+"股票第"+str(i)+"年的交易日期数据")
+            stocksDaliyReadSomePro([symbol], str_year=str(i))
+    # 重新打开
+    workbook = xlrd.open_workbook(path)
+    sheet_year = workbook.sheet_by_name(str(int(start_year)))
+    data_df = pd.DataFrame(columns=sheet_year.row_values(0)[1:])
+
+    count = int(end_year) - int(start_year)  # 需要查询的年数
+    j = 0
+    # 获取开始到截至的日期这段时间的日期列表
+    dates = []
+    dt = datetime.datetime.strptime(start_date, "%Y%m%d")
+    date = start_date[:]
+    while date <= end_date:
+        dates.append(date)
+        dt = dt + datetime.timedelta(1)
+        date = dt.strftime("%Y%m%d")
+    # 开始查询
+    while True:
+        now_year = str(int(start_year)+j)
+        sheet_year = workbook.sheet_by_name(now_year)
+        row_amount = sheet_year.nrows
+        for i in range(1 , row_amount):
+            row_data = sheet_year.row_values(i)
+            if row_data[0] in dates:
+                data_df.loc[row_data[0]] = row_data[1:]
+        j += 1
+        if j > count:break
+    return data_df
+
+############################################################################################
+# 以下是获取股票每日指标数据
+def searchStocksDailyBasicPro(path, year, symbol):
+    '''
+    获取股票一年的每日指标数据
+    :param path:  需要读入的文件名称
+    :param year:    读取的年份
+    :param symbol:  股票代码
+    :return: 
+    '''
+    start_day = str(year) + '0101'
+    end_day = str(year) + '1231'
+    stocks_df = pro.daily_basic(ts_code=symbol, start_date=start_day, end_date=end_day)
+    stocks_df = stocks_df.iloc[::-1]
+    stocks_df.set_index('trade_date', inplace=True)
+    toExcel(path, str(year), stocks_df)
+
+def stocksDaliyBasicReadSomePro(trade_code_list, str_year):
+    '''
+   进行多股票三年的每日指标数据
+   :param symbol: 股票列表
+   :return:
+   '''
+    for symbol in trade_code_list:
+        path = 'D:\\程序化交易系统实现\\data\\股票每日指标数据\\' + symbol + '.xlsx'
+        searchStocksDailyBasicPro(path, str_year, symbol)
+        time.sleep(0.1)
+        
+# 获取股票每日指标数据,为今后服务
+def searchStocksDaliyBasicAPI(symbol, start_date, end_date):
+    '''
+    对外接口API，获取股票每日指标数据
+    :param symbol:     股票代码
+    :param start_date: 起始日期
+    :param end_date:   截至日期
+    :return:           返回获取股票每日指标数据（dataframe），索引是日期
+    '''
+    path = 'D:\\程序化交易系统实现\\data\\股票每日指标数据\\' + symbol + '.xlsx'
+    # 如果该股票不存在，则下载
+    try:
+        workbook = xlrd.open_workbook(path)
+    except:
+        print("无"+symbol+"股票数据，正在下载")
+        start_year = start_date[0:4]
+        end_year = end_date[0:4]
+        for i in range(int(start_year),int(end_year)+1):
+            stocksDaliyBasicReadSomePro([symbol], str_year=str(i))
+        workbook = xlrd.open_workbook(path)
+
+    # 取得需要查询的表格
+    start_year = start_date[0:4]
+    end_year = end_date[0:4]
+
+    # 如果没有相应的年份，则下载
+    sheets = workbook.sheet_names()
+    for i in range(int(start_year), int(end_year)+1):
+        if str(i) not in sheets:
+            print("正在下载"+symbol+"股票第"+str(i)+"年的交易日期数据")
+            stocksDaliyBasicReadSomePro([symbol], str_year=str(i))
+    # 重新打开
+    workbook = xlrd.open_workbook(path)
+    count = int(end_year) - int(start_year)  # 需要查询的年数
+    j = 0
+
+    sheet_year = workbook.sheet_by_name(str(int(start_year)))
+    data_df = pd.DataFrame(columns=sheet_year.row_values(0)[1:])
+    # print(data_df)
+
+    dates = []
+    dt = datetime.datetime.strptime(start_date, "%Y%m%d")
+    date = start_date[:]
+    while date <= end_date:
+        dates.append(date)
+        dt = dt + datetime.timedelta(1)
+        date = dt.strftime("%Y%m%d")
+
+    while True:
+        now_year = str(int(start_year) + j)
+        sheet_year = workbook.sheet_by_name(now_year)
+        row_amount = sheet_year.nrows
+        for i in range(1, row_amount):
+            row_data = sheet_year.row_values(i)
+            if row_data[0] in dates:
+                data_df.loc[row_data[0]] = row_data[1:]
+        j += 1
+        if j > count: break
+    return data_df
+
+#############################################################################
+# 以下是获取指数每日成分股
+def searchIndexDailyComPro(path, year, symbol):
+    '''
+    获取股票一年的每日指数成分
+    :param path:  需要读入的文件名称
+    :param year:    读取的年份
+    :param symbol:  指数代码
+    :return: 
+    '''
+    start_day = str(year) + '0101'
+    end_day = str(year) + '1231'
+    stocks_df = pro.index_weight(index_code=symbol, start_date=start_day, end_date=end_day)
+    stocks_df.set_index('trade_date', inplace=True)
+    stocks_df = stocks_df.iloc[::-1]
+    toExcel(path, str(year), stocks_df)
+
+def stocksIndexDaliyComSomePro(indx_code_list, str_year):
+    '''
+   进行多股票三年的每日指标数据
+   :param indx_code_list: 指数名称列表
+   :return:
+   '''
+    for symbol in indx_code_list:
+        path = 'D:\\程序化交易系统实现\\data\\指数每日成分股\\' + symbol + '.xlsx'
+        searchIndexDailyComPro(path, str_year, symbol)
+
+def searchDate(date):
+    '''
+    更改查询日期
+    :param date: 原查询日期
+    :return:     更改后的查询日期
+    '''
+    year = date[0:4]
+    mounth = date[4:6]
+    if int(mounth) <= 4 : mounth = '05'
+    search_staret_date = year + mounth + '01'
+    search_end_date = year + mounth + '30'
+    df = searchTradeDayAPI(search_staret_date,search_end_date)
+    for i in range(0, len(df)):
+        search_date = str(int(search_staret_date)+ i)
+        if df.loc[search_date]['is_open'] == 1:
+            return search_date
+
+# 获取指数每日成分股数据,为今后服务
+def searchIndxDaliyComAPI(symbol, date):
+    '''
+    对外接口API，获取股票每日指标数据
+    :param symbol:     指数代码
+    :param date:       查询日期
+    :return:           返回获取指数每日成分股（dataframe），索引是股票代码
+    '''
+    path = 'D:\\程序化交易系统实现\\data\\指数每日成分股\\' + symbol + '.xlsx'
+    workbook = xlrd.open_workbook(path)
+    # 取得需要查询的表格
+    year = date[0:4]
+    # 如果没有相应的年份，则下载
+    sheets = workbook.sheet_names()
+    if year not in sheets:
+        print("正在下载"+symbol+"指数第"+year+"年的数据")
+        stocksIndexDaliyComSomePro([symbol], year)
+    # 重新打开
+    workbook = xlrd.open_workbook(path)
+    sheet = workbook.sheet_by_name(year)
+    search_date = searchDate(date) # 获取需要查询的日期
+    row = sheet.nrows
+    stocks_com_df = pd.DataFrame(columns=[ 'weight'])
+    for i in range(1,row):
+        rows = sheet.row_values(i)
+        if rows[0] == search_date:
+            stocks_com_df.loc[rows[2]] = [rows[3]]
+    return stocks_com_df
+
+#########################################################
+# 一下是获取指数日线行情数据
+def searchIndexDailyPro(path, year, symbol):
+    '''
+    获取股票一年的指数日线行情数据
+    :param path:  需要读入的文件名称
+    :param year:    读取的年份
+    :param symbol:  指数代码
+    :return: 
+    '''
+    start_day = str(year) + '0101'
+    end_day = str(year) + '1231'
+    stocks_df = pro.index_daily(ts_code=symbol, start_date=start_day, end_date=end_day)
+    stocks_df.set_index('trade_date', inplace=True)
+    stocks_df = stocks_df.iloc[::-1]
+    toExcel(path, str(year), stocks_df)
+
+def stocksIndexDaliySomePro(indx_code_list, str_year):
+    '''
+   进行多指数三年的指数日线行情数据
+   :param indx_code_list: 指数名称列表
+   :return:
+   '''
+    for symbol in indx_code_list:
+        path = 'D:\\程序化交易系统实现\\data\\指数日线行情\\' + symbol + '.xlsx'
+        searchIndexDailyPro(path,str_year, symbol)
+
+# 获取指数日线行情数据,为今后服务
+def searchIndexDaliyAPI(symbol, start_date, end_date):
+    '''
+    对外接口API，获取指数日线行情数据
+    :param symbol:     指数代码
+    :param start_date: 起始日期
+    :param end_date:   截至日期
+    :return:           返回获取指数每日指标数据（dataframe），索引是日期
+    '''
+    path = 'D:\\程序化交易系统实现\\data\\指数日线行情\\' + symbol + '.xlsx'
+    workbook = xlrd.open_workbook(path)
+    # 取得需要查询的表格
+    start_year = start_date[0:4]
+    end_year = end_date[0:4]
+
+    # 如果没有相应的年份，则下载
+    sheets = workbook.sheet_names()
+    for i in range(int(start_year), int(end_year)+1):
+        if str(i) not in sheets:
+            print("正在下载"+symbol+"指数"+str(i)+"年的交易日期数据")
+            stocksIndexDaliySomePro([symbol], str_year=str(i))
+    # 重新打开
+    workbook = xlrd.open_workbook(path)
+    count = int(end_year) - int(start_year)  # 需要查询的年数
+    data_df = pd.DataFrame(columns=['ts_code',	'close','open'	,'high'	,'low'	,'pre_close','change','pct_chg','vol',	'amount'])
+    j = 0
+
+    dates = []
+    dt = datetime.datetime.strptime(start_date, "%Y%m%d")
+    date = start_date[:]
+    while date <= end_date:
+        dates.append(date)
+        dt = dt + datetime.timedelta(1)
+        date = dt.strftime("%Y%m%d")
+
+    while True:
+        now_year = str(int(start_year) + j)
+        sheet_year = workbook.sheet_by_name(now_year)
+        row_amount = sheet_year.nrows
+        for i in range(1, row_amount):
+            row_data = sheet_year.row_values(i)
+            if row_data[0] in dates:
+                data_df.loc[row_data[0]] = row_data[1:11]
+        j += 1
+        if j > count: break
+    return data_df
+
+###########################################################################
+# 以下为得到股票的移动平均线
+def SMA_API(symbol, start_date, end_date, timeperiod = 5, return_type = 1):
+    '''
+    得到移动平均线
+    :param symbol:     代码
+    :param start_date: 开始日期
+    :param end_date:   截止日期
+    :param timeperiod: 移动窗口
+    :param return_type:输出类型（1：array，其他：dataframe）
+    :return:           1：array，其他：dataframe
+    '''
+    df = searchStocksDailyAPI(symbol,start_date,end_date)
+    if len(df)<timeperiod:
+        ma = np.zeros(timeperiod)
+    else:
+        closed = df['close'].values
+        ma =talib.SMA(closed,timeperiod)
+
+    if return_type == 1:
+        return ma
+    else:
+        df['ma' + str(timeperiod)] = ma
+        return df
+
+# 画出股票移动平均线
+def plotSMA_API(symbol, start_date, end_date, timeperiod = 5):
+    '''
+    SMA移动平均线画图
+    :param symbol:     股票代码
+    :param start_date: 起始日期
+    :param end_date:   截止日期
+    :param timeperiod: 移动窗口
+    :return:           sma图
+    '''
+    df = SMA_API(symbol, start_date, end_date, timeperiod, 0)
+    print(df)
+    df.plot(y=['ma' + str(timeperiod)])
+    plt.show()
+
+
+#####################################################33
+# 以下是获取收益率曲线，hs300指数作为对比
+# plt.figure(figsize=(12,8))
+# #通过plog函数可以很方便的绘制出每一条均线
+# plt.plot(closed)
+# plt.plot(ma5)
+# plt.plot(ma10)
+# plt.plot(ma20)
+# #添加网格，可有可无，只是让图像好看点
+# plt.grid()
+# #记得加这一句，不然不会显示图像
+# plt.show()
+# df1 = searchStocksDailyAPI('000001.SZ','20160102','20171102')
+# print(df1)
+# print(df1.iloc[0]['high'])
+
+##################################################################################
+# 得到上海银行间同业拆放利率
+def searchShiborPro(path, year):
+    '''
+    获取拆放利率一年的数据
+    :param path:  需要读入的文件名称
+    :param year:    读取的年份
+    :return: 
+    '''
+    start_day = str(year) + '0101'
+    end_day = str(year) + '1231'
+    stocks_df = pro.shibor(start_date=start_day, end_date=end_day)
+    stocks_df.set_index('date', inplace=True)
+    stocks_df = stocks_df.iloc[::-1]
+    toExcel(path, str(year), stocks_df)
+
+def searchShiborSomePro(path, str_year):
+    '''
+   获取拆放利率三年的数据
+   :return:
+   '''
+    path = 'D:\\程序化交易系统实现\\data\\shibor.xlsx'
+    searchShiborPro(path, str_year)
+
+def searchShiborAPI(start_date, end_date):
+    '''
+    对外接口API，获取上海银行间同业拆放利率数据
+    :param start_date: 起始日期
+    :param end_date:   截至日期
+    :return:           返回上海银行间同业拆放利率数据（dataframe），索引是日期
+    '''
+    path = 'D:\\程序化交易系统实现\\data\\shibor.xlsx'
+    workbook = xlrd.open_workbook(path)
+    # 取得需要查询的表格
+    start_year = start_date[0:4]
+    end_year = end_date[0:4]
+
+    # 如果没有相应的年份，则下载
+    sheets = workbook.sheet_names()
+    for i in range(int(start_year), int(end_year)+1):
+        if str(i) not in sheets:
+            print("正在下载上海银行间同业拆放利率"+str(i)+"年的交易日期数据")
+            searchShiborSomePro(path, str(i))
+    # 重新打开
+    workbook = xlrd.open_workbook(path)
+
+    count = int(end_year) - int(start_year)  # 需要查询的年数
+    data_df = pd.DataFrame(columns=['on','1w','2w','1m','3m','6m','9m','1y'])
+    j = 0
+    # 获取开始到截至的日期这段时间的日期列表
+    dates = []
+    dt = datetime.datetime.strptime(start_date, "%Y%m%d")
+    date = start_date[:]
+    while date <= end_date:
+        dates.append(date)
+        dt = dt + datetime.timedelta(1)
+        date = dt.strftime("%Y%m%d")
+    # 开始查询
+    while True:
+        now_year = str(int(start_year)+j)
+        sheet_year = workbook.sheet_by_name(now_year)
+        row_amount = sheet_year.nrows
+        for i in range(1 , row_amount):
+            row_data = sheet_year.row_values(i)
+            if row_data[0] in dates:
+                data_df.loc[row_data[0]] = row_data[1:9]
+        j += 1
+        if j > count:break
+    return data_df
