@@ -1,0 +1,180 @@
+import pandas as pd
+import numpy as np
+import datetime
+import time
+from AccountClass import Account
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+
+class Schedule(object):
+
+    def __init__(self, account, start_date, end_date):
+        '''
+        初始化
+        :param account:    账户类
+        :param start_date: 回测起始日期
+        :param end_date:   回测终止日期
+        '''
+        self.account = account
+        self.start_date = start_date
+        self.end_date = end_date
+        self.return_df = pd.DataFrame(columns=['total_assert', 'total_amount', 'cash', 'return'])
+
+    def dateRange(self, start_date, end_date):
+        '''
+        获取自然日期列表
+        :param start_date: 起始日期
+        :param end_date:   终止日期
+        :return:           自然日期列表（日期为字符串）
+        '''
+        dates = []
+        dt = datetime.datetime.strptime(start_date, "%Y%m%d")
+        date = start_date[:]
+        while date <= end_date:
+            dates.append(date)
+            dt = dt + datetime.timedelta(1)
+            date = dt.strftime("%Y%m%d")
+        return dates
+
+    def scheduleRun(self, fields, function):
+        '''
+        自定义时间函数
+        :param fields:   1d为每日执行，1m为每月执行
+        :param function: 执行函数名
+        :return: 
+        '''
+        datelist = self.dateRange(self.start_date, self.end_date)
+        self.account.date = datelist[0] # 使得账户日期为初始日期
+        if fields == '1d':
+            length = len(datelist)
+            self.date_length = length # 用于计算年化收益率
+            for date in datelist:
+                flag = self.account.searchIsTradeDay(date) # 查询是否是交易日期，是进行function交易
+                self.account.date = date
+                if flag == 1:
+                    function(self.account)
+                    self.assetsStatus()
+
+        if fields == '1m':
+            length = len(datelist)
+            self.date_length = length # 用于计算年化收益率
+            i = 0
+            self.account.date = datelist[0]
+            while True:
+                if i % 30 == 0:
+                    while True:
+                        flag = self.account.searchIsTradeDay(datelist[i])
+                        if flag == 0:
+                            self.account.date = datelist[i]
+                            i += 1
+                            if i >= length: break
+                        if flag == 1:
+                            function(self.account)
+                            self.account.date = datelist[i]
+                            self.assetsStatus()
+                            break
+                else:
+                    self.account.date = datelist[i]
+                    flag = self.account.searchIsTradeDay(datelist[i])
+                    if flag == 1:
+                        self.assetsStatus()
+                i += 1
+                if i >= length:break
+        self.assetsResult()
+
+    def assetsStatus(self):
+        '''
+        获取自身资产列表
+        :return:  获取自身资产列表,索引为日期
+        '''
+        # 'total_assert', 'total_amount', 'cash', 'return'
+        self.account.updateStocksTable()
+        date = self.account.date
+        total_assert = self.account.searchTotalAssets()
+        cash = self.account.cash.searchCash()
+        total_amount = self.account.searchTotalAmount()
+        return_rate = total_assert /self.account.inital - 1
+        self.return_df.loc[date]= [total_assert, total_amount, cash, return_rate]
+        return self.return_df
+
+    def assetsResult(self):
+        '''
+        获取结果列表
+        :return:  在资产列表上增加hs300收益率, 并得出年华收益率， 夏普比率， 最大回撤区间
+        '''
+        self.result_df = self.return_df
+        # 求hs300的涨幅度（array）
+        hs300_df = self.account.searchIndexDaliy('399300.SZ',self.start_date, self.end_date)
+        hs300_list = []
+        for i in range(0,len(hs300_df)):
+            hs300_list.append(hs300_df.iloc[i]['close'] / hs300_df.iloc[0]['close'] - 1)
+        self.result_df['hs300_return'] = hs300_list
+        self.result_df['hs300'] = hs300_df['close']
+        # 计算年化收益率
+        self.rate_year = self.result_df.iloc[-1]['return'] / self.date_length * 365
+        print('年化收益率：%f' % self.rate_year)
+        # 首先计算日回报率
+        total_assert_list = list(self.result_df['total_assert'])
+        return_pct_change_list = []
+        for i in range(len(total_assert_list)):
+            if i == 0:
+                continue
+            return_pct_change_list.append(total_assert_list[i] / total_assert_list[i - 1] - 1)
+        # 计算夏普比例
+        return_pct_change_array =np.array(return_pct_change_list)
+        self.ASR = return_pct_change_array.mean() - (0.04/252)
+        self.ASR = self.ASR / return_pct_change_array.std() * np.sqrt(252)
+        print('夏普比率:%f' % self.ASR)
+        # 计算最大回撤收益率，用总资产来计算
+        self.max_rate = self.maxDrawDown(total_assert_list)
+        date_list = self.return_df.index
+        print('最大回撤率：%f，从%s开始，%s结束' % (self.max_rate[0],date_list[self.max_rate[1]],date_list[self.max_rate[2]]))
+        return self.result_df
+
+    def maxDrawDown(self, return_list):
+        """最大回撤率"""
+        maxac = np.zeros(len(return_list))
+        b = return_list[0]
+        for i in range(0, len(return_list)):  # 遍历数组，当其后一项大于前一项时，赋值给b
+            if return_list[i] > b:
+                b = return_list[i]
+            maxac[i] = b
+        # print(maxac)
+        i = np.argmax((maxac - return_list) / maxac)  # 结束位置
+        if i == 0:
+            return [0 , 0 , 0]
+        j = np.argmax(return_list[:i])  # 开始位置
+        return [(return_list[j] - return_list[i]) / (return_list[j]), j , i]
+
+    def plotResult(self):
+        '''
+        画出图像
+        :return: 画出收益率曲线，hs300 和 自身收益率 
+        '''
+        # 设置结果列表（日期，收益率，hs300收益率）
+        result_df = pd.DataFrame(index=self.result_df.index)
+        result_df['hs300_return'] = self.result_df['hs300_return']
+        result_df['return_rate'] = self.result_df['return']
+        result_df.plot()
+        plt.show()
+
+
+
+# account = Account('1', 100000)
+# Run = Schedule(account,'20171201', '20180102')
+#
+# def function(account):
+#     print('今天是 '+ account.date)
+#     account.orderByPercentCash('000001.SZ', 0.1, 0)
+#     account.orderByPercentCash('000002.SZ', 0.1, 0)
+#     print( '今天结束')
+#
+# Run.scheduleRun('1m',function)
+# Run.plotResult()
+#
+
+
+
+
+
+
