@@ -1,0 +1,110 @@
+import pandas as pd
+import numpy as np
+from PositionsClass import Positions
+
+class Cash(object):
+    '''
+    用来查询现金，查询总资产，现金与持仓之间的转换，position全部功能
+    '''
+    def __init__(self, initial_funds):
+        '''
+        初始化，构建position对象
+        :param initial_funds: 初始资金
+        '''
+        self.cash = initial_funds
+        self.position = Positions()
+
+    def searchCash(self):
+        '''
+        查询现金
+        :return: 现金
+        '''
+        return self.cash
+
+    def searchTotalAssets(self):
+        '''
+        查询总资产
+        :return: 总资产
+        '''
+        stocks_df = self.position.searchStocksTable()
+        stocks_sum = stocks_df['amount'].sum()
+        stocks_sum = round(stocks_sum, 2)
+        return stocks_sum + self.cash
+
+    def searchStocksTable(self):
+        '''
+        查询持仓列表
+        :return: 持仓列表
+        '''
+        stocks_table = self.position.searchStocksTable()
+        return stocks_table
+
+    def buyStocks(self, symbol, amount, volume, price, tax=0.003):
+        '''
+        买股票
+        :param symbol: 股票代码
+        :param amount: 股票总额
+        :param volume: 股票数量
+        :param price:  股票单价
+        :param tax:    手续费率，手续费 = tax * amount
+        :return: -1资金不足，0购买成功
+        '''
+        # 手续费小于5元时，取5元
+        if tax * amount < 5:
+            taxamount = 5
+        else:
+            taxamount = tax * amount
+        if self.cash < amount + taxamount:
+            self.cash = round(self.cash, 2)
+            return -1
+        else:
+            self.position.buyStocks(symbol, amount, volume, price)
+            total = amount + taxamount
+            total = round(total ,2)
+            self.cash -= total
+            self.cash = round(self.cash, 2)
+            return 0
+
+    def sellStocks(self, symbol, amount, volume, price, tax=0.004):
+        '''
+        卖股票
+        :param symbol: 股票代码
+        :param amount: 股票总额
+        :param volume: 股票数量
+        :param price:  股票单价
+        :param tax:    手续费率，手续费 = tax * amount
+        :return: -2为未持有股票，-1为股票数量或总市值不足，0为卖出成功并将资金转给现金
+        '''
+        # 手续费小于5元时，取5元
+        if tax * amount < 5:
+            taxamount = 5
+        else:
+            taxamount = tax * amount
+
+        amount = self.position.sellStocks(symbol, amount, volume, price)
+        if amount == -2:
+            return -2
+        elif amount == -1:
+            return -1
+        else:
+            total = amount - taxamount
+            total = round(total ,2)
+            self.cash += total
+            self.cash = round(self.cash, 2)
+            return 0
+
+    def updateStocksTable(self, symbol, price):
+        '''
+        更新股票列表
+        :param symbol: 股票代码
+        :param price:  股票单价
+        :return: 
+        '''
+        self.position.updateStocksTable(symbol,price)
+
+# c = Cash(100000000)
+# flag0 = c.buyStocks('hs300',98564,98564,1,0.03)
+# print(c.searchCash())
+# flag1 = c.buyStocks('hs400',1000000,10,100000,0.01)
+# flag3 = c.sellStocks('hs300',10,10,1,0.01)
+# print(c.searchStocksTable())
