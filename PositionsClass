@@ -1,0 +1,91 @@
+import pandas as pd
+import numpy as np
+
+class Positions(object):
+    '''
+    持仓对象，用于买卖股票，更新持仓情况
+    '''
+    def __init__(self):
+        '''
+        构建持仓表格
+        '''
+        self.stocks_table = pd.DataFrame(columns=['amount', 'volume', 'price'])
+
+    def buyStocks(self, symbol, amount, volume, price):
+        '''
+        买股票
+        :param symbol: 股票代码
+        :param amount: 股票总额
+        :param volume: 股票数量
+        :param price:  股票单价
+        :return: 
+        '''
+        index_list = list(self.stocks_table.index)
+        # 如果没有持有股票则直接添加
+        if symbol not in index_list:
+            self.stocks_table.loc[symbol] = [amount, volume, price]
+        # 如果原来有股票，则加上
+        else:
+            self.stocks_table.loc[symbol] ['amount'] += amount
+            self.stocks_table.loc[symbol] ['volume'] += volume
+            self.stocks_table.loc[symbol] ['price'] = price
+
+    def sellStocks(self, symbol, amount, volume, price):
+        '''
+        卖股票
+        :param symbol: 股票代码
+        :param amount: 股票总额
+        :param volume: 股票数量
+        :param price:  股票单价
+        :return: -2为未持有股票，-1为股票数量或金额不足，amount为卖出股票的金额
+        '''
+        index_list = list(self.stocks_table.index)
+        # 未持有股票
+        if symbol not in index_list:
+            return -2
+        else:
+            # 股票数量不足
+            if self.stocks_table.loc[symbol]['amount'] < amount or self.stocks_table.loc[symbol]['volume'] < volume:
+                return -1
+            else:
+                pre_amount = self.stocks_table.loc[symbol]['amount']
+                self.stocks_table.loc[symbol]['amount'] -= amount
+                self.stocks_table.loc[symbol]['volume'] -= volume
+                # 如果股票正好卖光，返回原有金额
+                if self.stocks_table.loc[symbol]['amount'] == 0 or self.stocks_table.loc[symbol]['volume'] == 0:
+                    self.stocks_table = self.stocks_table.drop(symbol, axis=0)
+                    return pre_amount
+                # 如果股票还有剩余，返回卖出金额
+                else:
+                    self.stocks_table.loc[symbol]['price'] = price
+                    self.stocks_table.loc[symbol]['amount'] = price * self.stocks_table.loc[symbol]['volume']
+                    return amount
+
+    def updateStocksTable(self, symbol, price):
+        '''
+        更新股票列表
+        :param symbol: 股票代码
+        :param price:  股票单价
+        :return: 
+        '''
+        self.stocks_table.loc[symbol]['price'] = price
+        self.stocks_table.loc[symbol]['amount'] = price * self.stocks_table.loc[symbol]['volume']
+
+    def searchStocksTable(self):
+        '''
+        查询持仓列表
+        :return: 持仓列表
+        '''
+        return self.stocks_table
+
+# p = Positions()
+# p.buyStocks('hs300',10,10,1)
+# p.buyStocks('hs400',50,20,2.5)
+# amount = p.sellStocks('hs300',9,9,1)
+# print(p.searchStocksTable())
+# '''
+#        amount volume price
+# hs400     50     20   2.5
+# '''
+
+
