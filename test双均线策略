@@ -1,0 +1,25 @@
+import pandas as pd
+import numpy as np
+import datetime
+import time
+import RunClass
+
+def before_trading(account):
+    account.stocks_df = account.searchIndexComponent('399300.SZ') # 获取沪深300的成分股
+    account.stocks_df = account.stocks_df.sort_values(by = 'weight', ascending=False)[0:10] # 所占比重的前10为标的股
+def trading(account):
+    for symbol in account.stocks_df.index:
+        sma5 = account.SMA(symbol)      # 计算每个股票的sma5
+        sma10 = account.SMA(symbol,10)  # 计算每个股票的sma10
+        if sma5[-1] > sma10[-1] and sma5[-2] < sma10[-2]: # 均线判断
+            account.orderByPersentTotal(symbol,0.1) # 按现有现金的0.1购买该股票
+        else:
+            print(account.date + ' '+ symbol + "不符合要求")
+def after_trading(account):
+    run.schedule.plotResult() # 展示结果
+
+if __name__ == '__main__':
+    run = RunClass.Run("1", 1000000, '20160126', '20161126', 0.003) # 设置账户必要参数，账户名字、初始金额、开始日期、结束日期、交易费率 
+    run.before_trading(before_trading) # 回测前的函数‘before_trading’
+    run.trading('1m', trading)  # ‘1m’代表月回测，‘1d’代表日回测，函数为‘trading’
+    run.after_trading(after_trading) # 回测后展示结果
