@@ -1,5 +1,5 @@
 # python-利用Tushare金融大数据社区的数据就行回测
-1. 首先必须在tushare社区申请账户（网址：https://tushare.pro/register?reg=325331），获取token，讲其复制进API文件中的“ts.set_token”函数中，本人tushare ID为325331。
+1. 首先必须在tushare社区申请账户（网址：https://tushare.pro/register?reg=325331），获取token，将其复制进API文件中的“ts.set_token”函数中，本人tushare ID为325331。
 2. 所有py文件放在一个目录下，最好为“D:\程序化交易系统实现\”，必须提前创建“D:\程序化交易系统实现\data\股票每日指标数据”、“D:\程序化交易系统实现\data\股票日线行情指标”、
 “D:\程序化交易系统实现\data\指数每日成分股”和“D:\程序化交易系统实现\data\指数日线行情”四个文件夹用于存储下载的数据。当下载时间超时时（如每秒访问次数超过200），之前下载数据的已经
 保存至data目录下，无需重新下载，只需要重新运行回测文件即可。
